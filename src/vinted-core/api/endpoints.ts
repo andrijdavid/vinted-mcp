@@ -69,6 +69,10 @@ export function buildUserItemsUrl(userId: number, country: string, page = 1, per
   return `${base}/api/v2/users/${userId}/items?page=${page}&per_page=${perPage}`;
 }
 
+export function buildFavouriteToggleUrl(country: string): string {
+  return `${getBaseUrl(country)}/api/v2/user_favourites/toggle`;
+}
+
 export function buildSimilarItemsUrl(itemId: number, country: string): string {
   return `${getBaseUrl(country)}/api/v2/items/${itemId}/similar_items`;
 }

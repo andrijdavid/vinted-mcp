@@ -4,6 +4,8 @@ export interface AuthSession {
   csrfToken: string;
   country: string;
   expiresAt: number;
+  userId?: number;
+  username?: string;
 }
 
 export type AuthMode = "http" | "playwright" | "env";

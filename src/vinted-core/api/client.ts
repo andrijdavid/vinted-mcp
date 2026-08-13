@@ -2,18 +2,31 @@ import { CookieFactory } from "../auth/cookie-factory";
 import { EnvAuth } from "../auth/env-auth";
 import { HttpAuth } from "../auth/http-auth";
 import { PlaywrightAuth } from "../auth/playwright-auth";
+import { ProfileAuth, hasProfile, loginHint } from "../auth/profile-auth";
 import { TokenCache } from "../auth/token-cache";
 import { getBaseUrl } from "../models/country";
-import { buildItemUrl, buildSearchUrl, buildUserItemsUrl, buildUserUrl } from "./endpoints";
+import {
+  buildFavouriteToggleUrl,
+  buildItemUrl,
+  buildSearchUrl,
+  buildUserItemsUrl,
+  buildUserUrl
+} from "./endpoints";
 import { RateLimiter } from "./rate-limiter";
 import { parseItem, parseItemDetail, parseSearchResponse, parseSellerProfile } from "../parsers/response-parser";
 import type { AuthSession, ClientOptions, SearchParams } from "../types";
 import { getRandomUserAgent, getBrowserHeaders, runtimeRequire } from "../auth/utils";
 
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+}
+
 export class VintedAPIClient {
   private readonly tokenCache = new TokenCache();
   private readonly httpAuth: HttpAuth;
   private readonly envAuth: EnvAuth;
+  private readonly profileAuth = new ProfileAuth();
   private readonly rateLimiter: RateLimiter;
   private readonly maxRetries: number;
   private readonly proxies: string[];
@@ -271,6 +284,42 @@ export class VintedAPIClient {
     };
   }
 
+  /**
+   * Vinted's favourite endpoint is a toggle, so read the current state first;
+   * liking an already-liked item would otherwise unlike it.
+   */
+  async setFavourite(itemId: number, country: string, liked: boolean) {
+    const key = country.toLowerCase();
+    const url = `${getBaseUrl(key)}/items/${itemId}`;
+
+    try {
+      const data = await this.makeRequest(buildItemUrl(itemId, key), key);
+      const item = data.item || data;
+      const wasLiked = Boolean(item.is_favourite);
+
+      if (wasLiked !== liked) {
+        await this.makeRequest(buildFavouriteToggleUrl(key), key, {
+          method: "POST",
+          body: { type: "item", user_favourites: [itemId] }
+        });
+      }
+
+      return {
+        id: itemId,
+        title: item.title || "",
+        liked,
+        changed: wasLiked !== liked,
+        url
+      };
+    } catch (error: any) {
+      const message = String(error?.message || error);
+      if (message.includes("401") || message.includes("403")) {
+        throw new Error(`${loginHint(key)} (${message})`);
+      }
+      throw error;
+    }
+  }
+
   invalidateSession(country: string): void {
     this.tokenCache.invalidate(country);
     this.envAuth.invalidate(country);
@@ -300,6 +349,14 @@ export class VintedAPIClient {
       return this.envAuth.createSession(country);
     }
 
+    if (hasProfile(country)) {
+      try {
+        return await this.profileAuth.createSession(country);
+      } catch (error: any) {
+        console.warn(`[vinted-core] Profile session failed for ${country}: ${error?.message || error}`);
+      }
+    }
+
     if (this.cookieFactory) {
       try {
         return await this.cookieFactory.createSession(country);
@@ -311,7 +368,7 @@ export class VintedAPIClient {
     return this.httpAuth.createSession(country);
   }
 
-  private async makeRequest(url: string, country: string, retryCount = 0): Promise<any> {
+  private async makeRequest(url: string, country: string, options: RequestOptions = {}, retryCount = 0): Promise<any> {
     const key = country.toLowerCase();
 
     if (this.consecutiveFailures >= VintedAPIClient.MAX_CONSECUTIVE_FAILURES) {
@@ -358,7 +415,17 @@ export class VintedAPIClient {
     }
 
     try {
-      const fetchOptions: Record<string, unknown> = { headers, redirect: "follow" };
+      const fetchOptions: Record<string, unknown> = {
+        headers,
+        redirect: "follow",
+        method: options.method || "GET"
+      };
+
+      if (options.body !== undefined) {
+        headers["Content-Type"] = "application/json";
+        fetchOptions.body = JSON.stringify(options.body);
+      }
+
       const dispatcher = this.getProxyDispatcher();
       if (dispatcher) {
         fetchOptions.dispatcher = dispatcher;
@@ -368,7 +435,7 @@ export class VintedAPIClient {
 
       if (response.ok) {
         this.consecutiveFailures = 0;
-        return response.json();
+        return parseJsonBody(await response.text());
       }
 
       const status = response.status;
@@ -380,6 +447,10 @@ export class VintedAPIClient {
 
         if (this.authMode === "env" && status === 401) {
           this.envAuth.invalidate(key);
+        }
+
+        if (status === 401 || status === 403) {
+          this.profileAuth.invalidate(key);
         }
 
         let pauseMs = 0;
@@ -405,7 +476,7 @@ export class VintedAPIClient {
           await sleep(pauseMs);
         }
 
-        return this.makeRequest(url, key, retryCount + 1);
+        return this.makeRequest(url, key, options, retryCount + 1);
       }
 
       throw new Error(`Vinted API error: ${status} ${response.statusText}`);
@@ -415,7 +486,7 @@ export class VintedAPIClient {
         const pauseMs = this.computeBackoff(retryCount + 1);
         this.rateLimiter.pause(pauseMs);
         await sleep(pauseMs);
-        return this.makeRequest(url, key, retryCount + 1);
+        return this.makeRequest(url, key, options, retryCount + 1);
       }
 
       throw error;
@@ -651,6 +722,18 @@ export class VintedAPIClient {
     }
 
     return undefined;
+  }
+}
+
+function parseJsonBody(text: string): any {
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
   }
 }
 

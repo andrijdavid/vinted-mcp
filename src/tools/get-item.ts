@@ -63,7 +63,7 @@ export async function handleGetItem(client: VintedAPIClient, args: any): Promise
   );
 }
 
-function parseItemUrl(url: string): { id: number; country: string } | null {
+export function parseItemUrl(url: string): { id: number; country: string } | null {
   const match = url.match(/vinted\.(\w+(?:\.\w+)?)\/.*?(\d+)/);
   if (!match) {
     return null;

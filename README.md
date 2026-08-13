@@ -159,6 +159,8 @@ Main variables:
 - `VINTED_AUTH_COOKIES`: cookie header string or JSON object string
 - `VINTED_AUTH_CSRF_TOKEN`: CSRF token
 - `VINTED_AUTH_ACCESS_TOKEN`: optional bearer token
+- `VINTED_AUTH_REFRESH_TOKEN`: optional refresh token, used to mint a new access token
+- `VINTED_PROFILE_DIR`: optional root for browser profiles created by `login`, default `~/.vinted-mcp`
 - `VINTED_PROXY_URL`: optional proxy URL
 - `VINTED_MAX_CONCURRENCY`: optional tuning
 - `VINTED_REQUEST_DELAY_MS`: optional tuning
@@ -182,7 +184,26 @@ Example client config with env auth:
 }
 ```
 
-### How to get cookies and CSRF token
+## Signing in
+
+Search and price tools work anonymously. Anything tied to your account (`like_item`) needs a
+logged-in session. Run this once per country:
+
+```bash
+npx @andrijdavid/vinted-mcp login --country fr
+```
+
+A browser window opens on Vinted. Sign in the way you normally do (password, captcha, 2FA, Google
+login all work). The window closes by itself once you are signed in, and the browser profile is
+saved to `~/.vinted-mcp/profile-<country>`. The server reopens that profile headlessly when it needs
+cookies, so the session refreshes itself and there is nothing to copy or paste.
+
+Requirements: Playwright with Chromium (`npm i playwright && npx playwright install chromium`).
+Set `VINTED_PROFILE_DIR` to move the profile root somewhere other than `~/.vinted-mcp`.
+
+### Manual cookies (headless servers and CI)
+
+Where no browser can be opened, use `VINTED_AUTH_MODE=env` and supply the credentials yourself:
 
 1. Sign in to Vinted in your browser.
 2. Open Developer Tools.
@@ -191,13 +212,15 @@ Example client config with env auth:
 5. Copy from `Request Headers`:
    - `cookie` -> `VINTED_AUTH_COOKIES`
    - `x-csrf-token` -> `VINTED_AUTH_CSRF_TOKEN`
-6. Optional: copy `authorization: Bearer ...` token into `VINTED_AUTH_ACCESS_TOKEN`.
+6. Optional: copy `authorization: Bearer ...` token into `VINTED_AUTH_ACCESS_TOKEN`, and the
+   `refresh_token_web` cookie value into `VINTED_AUTH_REFRESH_TOKEN`.
 
 Security notes:
 
 - treat these values as secrets
 - never commit `.env`
 - rotate tokens/cookies if exposed
+- the saved browser profile holds a live session; it is stored with owner-only permissions
 
 ## Tools
 
@@ -220,6 +243,12 @@ Compare average and median prices for a query across countries.
 ### `get_trending`
 
 Return trending items by engagement score.
+
+### `like_item`
+
+Add an item to your favourites by `itemId` or `url`, or remove it with `unlike: true`. Needs a
+logged-in session, see [Signing in](#signing-in). Already-liked items are left alone rather than
+toggled off.
 
 ## Resources
 

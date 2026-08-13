@@ -16,10 +16,11 @@ import { comparePricesTool, handleComparePrices } from "./tools/compare-prices";
 import { getItemTool, handleGetItem } from "./tools/get-item";
 import { getSellerTool, handleGetSeller } from "./tools/get-seller";
 import { getTrendingTool, handleGetTrending } from "./tools/get-trending";
+import { handleLikeItem, likeItemTool } from "./tools/like-item";
 import { handleSearchItems, searchItemsTool } from "./tools/search-items";
 import { VintedAPIClient } from "./vinted-core";
 
-const TOOLS = [searchItemsTool, getItemTool, getSellerTool, comparePricesTool, getTrendingTool];
+const TOOLS = [searchItemsTool, getItemTool, getSellerTool, comparePricesTool, getTrendingTool, likeItemTool];
 const RESOURCES = [countriesResource, categoriesResource];
 const RESOURCE_TEMPLATES = [
   {
@@ -166,6 +167,9 @@ export function createServer(): Server {
           break;
         case "get_trending":
           result = await handleGetTrending(apiClient, args);
+          break;
+        case "like_item":
+          result = await handleLikeItem(apiClient, args);
           break;
         default:
           throw new Error(`Unknown tool: ${name}`);

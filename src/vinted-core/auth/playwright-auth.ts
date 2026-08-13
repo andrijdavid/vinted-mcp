@@ -174,7 +174,7 @@ export class PlaywrightAuth {
   }
 }
 
-function browserArgs(): string[] {
+export function browserArgs(): string[] {
   if (process.platform === "linux") {
     return [
       "--no-sandbox",
