@@ -42,22 +42,26 @@ export interface ParsedItem {
 export function parseItem(raw: any, country: string): ParsedItem {
   const baseUrl = getBaseUrl(country);
   const seller = raw.user || raw.seller || {};
+  // svc-catalogue results carry no structured brand/size/condition. They only
+  // exist baked into item_box's display strings: first_line is the brand,
+  // second_line is "size · condition".
+  const [boxSize, boxCondition] = String(raw.item_box?.second_line || "").split(" \u00b7 ");
 
   return {
     id: raw.id,
-    url: raw.url || `${baseUrl}/items/${raw.id}`,
+    url: toAbsoluteUrl(raw.url, baseUrl) || `${baseUrl}/items/${raw.id}`,
     title: raw.title || "",
     description: raw.description || "",
     price: parseFloat(raw.price?.amount || raw.price || raw.total_item_price?.amount || "0"),
     currency: raw.price?.currency_code || raw.currency || "EUR",
     originalPrice: raw.original_price ? parseFloat(raw.original_price.amount || raw.original_price) : null,
     country,
-    brand: raw.brand_title || raw.brand || null,
+    brand: raw.brand_title || raw.brand || raw.item_box?.first_line || null,
     brandId: raw.brand_id || raw.brand_dto?.id || null,
     category: raw.catalog_title || raw.category || null,
     categoryId: raw.catalog_id || raw.category_id || null,
-    size: raw.size_title || raw.size || null,
-    condition: raw.status || raw.condition || null,
+    size: raw.size_title || raw.size || boxSize?.trim() || null,
+    condition: raw.status || raw.condition || boxCondition?.trim() || null,
     color: raw.color1 || raw.color || null,
     photos: (raw.photos || raw.photo_urls || [])
       .map((photo: any) =>
@@ -75,15 +79,20 @@ export function parseItem(raw: any, country: string): ParsedItem {
   };
 }
 
-export function parseItemDetail(raw: any, country: string): ParsedItem {
-  const item = parseItem(raw, country);
-  return {
-    ...item,
-    description: raw.description || "",
-    photos: (raw.photos || [])
-      .map((photo: any) => (typeof photo === "string" ? photo : photo.full_size_url || photo.url || ""))
-      .filter(Boolean)
-  };
+/** Vinted reports feedback_reputation as a 0-1 fraction; callers expect stars. */
+function toStars(reputation: unknown): number | null {
+  const value = parseFloat(String(reputation));
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.round(value * 5 * 10) / 10;
+}
+
+function toAbsoluteUrl(url: unknown, baseUrl: string): string {
+  if (typeof url !== "string" || !url) {
+    return "";
+  }
+  return url.startsWith("http") ? url : `${baseUrl}${url}`;
 }
 
 export function parseSeller(raw: any, country: string): ParsedSeller {
@@ -91,7 +100,7 @@ export function parseSeller(raw: any, country: string): ParsedSeller {
   return {
     id: raw.id || 0,
     username: raw.login || raw.username || "",
-    rating: raw.feedback_reputation !== undefined ? parseFloat(raw.feedback_reputation) : null,
+    rating: toStars(raw.feedback_reputation),
     ratingCount: raw.feedback_count || raw.rating_count || 0,
     itemCount: raw.item_count || raw.items_count || 0,
     followerCount: raw.followers_count || raw.follower_count || 0,
@@ -107,7 +116,7 @@ export function parseSellerProfile(raw: any, country: string) {
     id: raw.id,
     username: raw.login || raw.username || "",
     profileUrl: raw.profile_url || `${baseUrl}/member/${raw.id}-${raw.login || ""}`,
-    rating: raw.feedback_reputation !== undefined ? parseFloat(raw.feedback_reputation) : null,
+    rating: toStars(raw.feedback_reputation),
     ratingCount: raw.feedback_count || 0,
     itemCount: raw.item_count || raw.items_count || 0,
     soldItemCount: raw.given_item_count || raw.sold_item_count || 0,
@@ -116,7 +125,7 @@ export function parseSellerProfile(raw: any, country: string) {
     country,
     city: raw.city || null,
     lastSeenAt: raw.last_loged_on_ts || null,
-    createdAt: raw.created_at || "",
+    createdAt: raw.created_at || null,
     verifications: {
       email: raw.verification?.email?.valid || false,
       phone: raw.verification?.phone?.valid || false,

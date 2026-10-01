@@ -7,13 +7,14 @@ import { TokenCache } from "../auth/token-cache";
 import { getBaseUrl } from "../models/country";
 import {
   buildFavouriteToggleUrl,
-  buildItemUrl,
+  buildItemPageUrl,
   buildSearchUrl,
-  buildUserItemsUrl,
-  buildUserUrl
+  buildUserFeedbacksUrl,
+  buildUserUrl,
+  buildWardrobeUrl
 } from "./endpoints";
 import { RateLimiter } from "./rate-limiter";
-import { parseItem, parseItemDetail, parseSearchResponse, parseSellerProfile } from "../parsers/response-parser";
+import { parseItem, parseSearchResponse, parseSeller, parseSellerProfile } from "../parsers/response-parser";
 import type { AuthSession, ClientOptions, SearchParams } from "../types";
 import { getRandomUserAgent, getBrowserHeaders, runtimeRequire } from "../auth/utils";
 
@@ -65,37 +66,32 @@ export class VintedAPIClient {
     return parseSearchResponse(data, params.country, params.page || 1, params.perPage || 24);
   }
 
+  /**
+   * Vinted removed the item JSON API; the public item page is the only source
+   * of detail left, so scrape it and fill the seller block from the user API,
+   * which is still alive.
+   */
   async getItem(id: number, country: string) {
-    const apiUrl = buildItemUrl(id, country);
-
-    if (this.playwrightAuth) {
-      try {
-        const data = await this.makePlaywrightRequest(apiUrl, country);
-        return parseItemDetail(data.item || data, country);
-      } catch {
-        // Continue with fallback.
-      }
-    }
-
     try {
-      const data = await this.makeRequest(apiUrl, country);
-      return parseItemDetail(data.item || data, country);
-    } catch {
-      // Continue with HTML scraping fallback.
-    }
+      const item = await this.scrapeItemPage(id, country);
 
-    if (this.playwrightAuth) {
-      try {
-        return await this.scrapeItemPage(id, country);
-      } catch (error: any) {
-        console.warn(`[vinted-core] HTML scraping failed for item ${id}: ${error?.message || error}`);
+      if (item.seller.id) {
+        try {
+          const userData = await this.makeRequest(buildUserUrl(item.seller.id, country), country);
+          item.seller = parseSeller(userData.user || userData, country);
+        } catch (error: any) {
+          console.warn(`[vinted-core] Seller lookup failed for item ${id}: ${error?.message || error}`);
+        }
       }
+
+      return item;
+    } catch (error: any) {
+      console.warn(`[vinted-core] Item page scrape failed for ${id}: ${error?.message || error}`);
     }
 
-    console.warn(`[vinted-core] All methods failed for item ${id}, returning partial data`);
     return {
       id,
-      url: `${getBaseUrl(country)}/items/${id}`,
+      url: buildItemPageUrl(id, country),
       title: "",
       description: "(All fetch methods failed)",
       price: 0,
@@ -133,18 +129,27 @@ export class VintedAPIClient {
 
   async getSeller(id: number, country: string) {
     const userUrl = buildUserUrl(id, country);
-    const itemsUrl = buildUserItemsUrl(id, country);
+    const feedbacksUrl = buildUserFeedbacksUrl(id, country);
+    const wardrobeUrl = buildWardrobeUrl(id, country);
 
     const fetchSellerData = async (requestFn: (url: string, country: string) => Promise<any>) => {
-      const [userData, itemsData] = await Promise.all([
+      const [userData, feedbackData, itemsData] = await Promise.all([
         requestFn(userUrl, country),
-        requestFn(itemsUrl, country).catch(() => ({ items: [] }))
+        requestFn(feedbacksUrl, country).catch(() => ({ user_feedbacks: [] })),
+        requestFn(wardrobeUrl, country).catch(() => ({ items: [] }))
       ]);
+
+      const items = (itemsData.items || []).map((item: any) => parseItem(item, country));
 
       const raw = userData.user || userData;
       const profile = parseSellerProfile(raw, country);
-      const items = (itemsData.items || []).map((item: any) => parseItem(item, country));
-      return { ...profile, items, scrapedAt: new Date().toISOString() };
+      const reviews = (feedbackData.user_feedbacks || []).map((feedback: any) => ({
+        rating: feedback.rating,
+        comment: feedback.feedback || "",
+        createdAt: feedback.created_at_ts || null
+      }));
+
+      return { ...profile, reviews, items, scrapedAt: new Date().toISOString() };
     };
 
     if (this.playwrightAuth) {
@@ -173,8 +178,9 @@ export class VintedAPIClient {
           country,
           city: null,
           lastSeenAt: null,
-          createdAt: "",
+          createdAt: null,
           verifications: { email: false, phone: false, facebook: false, google: false },
+          reviews: [],
           items: [],
           scrapedAt: new Date().toISOString()
         };
@@ -184,14 +190,10 @@ export class VintedAPIClient {
     }
   }
 
+  /** Needs a logged-in session; Vinted returns an empty wardrobe to anonymous callers. */
   async getSellerItems(id: number, country: string, perPage = 24) {
-    const result = await this.searchItems({ country, userId: id, perPage });
-    return result.items;
-  }
-
-  async getSoldItems(query: string, country: string, perPage = 24) {
-    const result = await this.searchItems({ query, country, perPage, sortBy: "newest_first" });
-    return result.items;
+    const data = await this.makeRequest(buildWardrobeUrl(id, country, 1, perPage), country);
+    return (data.items || []).map((item: any) => parseItem(item, country));
   }
 
   async getTrending(query: string, country: string, perPage = 24) {
@@ -290,13 +292,19 @@ export class VintedAPIClient {
    */
   async setFavourite(itemId: number, country: string, liked: boolean) {
     const key = country.toLowerCase();
-    const url = `${getBaseUrl(key)}/items/${itemId}`;
+    const url = buildItemPageUrl(itemId, key);
 
     try {
-      const data = await this.makeRequest(buildItemUrl(itemId, key), key);
-      const item = data.item || data;
-      const wasLiked = Boolean(item.is_favourite);
+      // The item JSON API is gone, so read the current state off the item page
+      // with the logged-in session. The toggle endpoint would otherwise unlike
+      // an item that is already liked.
+      const html = await this.fetchItemPage(itemId, key);
+      const likedMatch = html.match(/\\"is_favourite\\":(true|false)/);
+      if (!likedMatch) {
+        throw new Error("Could not read the item's current favourite state from the item page");
+      }
 
+      const wasLiked = likedMatch[1] === "true";
       if (wasLiked !== liked) {
         await this.makeRequest(buildFavouriteToggleUrl(key), key, {
           method: "POST",
@@ -304,9 +312,12 @@ export class VintedAPIClient {
         });
       }
 
+      const titleMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+      const title = titleMatch ? (safeJsonParse(titleMatch[1])?.name ?? "") : "";
+
       return {
         id: itemId,
-        title: item.title || "",
+        title,
         liked,
         changed: wasLiked !== liked,
         url
@@ -556,78 +567,88 @@ export class VintedAPIClient {
     throw new Error(`Vinted API error (playwright): ${response.status} ${response.statusText}`);
   }
 
-  private async scrapeItemPage(id: number, country: string): Promise<any> {
-    if (!this.playwrightAuth) {
-      throw new Error("PlaywrightAuth not available");
+  private async fetchItemPage(id: number, country: string): Promise<string> {
+    const dispatcher = this.getProxyDispatcher();
+
+    let cookieHeader = "";
+    try {
+      const session = await this.getSession(country);
+      cookieHeader = Object.entries(session.cookies)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("; ");
+    } catch {
+      // Item pages load anonymously; a session is a nice-to-have, not required.
     }
 
-    const baseUrl = getBaseUrl(country);
-    const pageUrl = `${baseUrl}/items/${id}`;
-    const session = await this.playwrightAuth.createSession(country);
-    const cookieHeader = Object.entries(session.cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join("; ");
-
-    const response = await fetch(pageUrl, {
-      headers: {
-        "User-Agent": this.playwrightAuth.getUserAgent(country),
-        Accept: "text/html,application/xhtml+xml",
-        Cookie: cookieHeader
-      },
-      redirect: "follow"
-    });
+    const response = await this.rateLimiter.execute(() =>
+      fetch(buildItemPageUrl(id, country), {
+        headers: {
+          "User-Agent": getRandomUserAgent(),
+          Accept: "text/html,application/xhtml+xml",
+          ...(cookieHeader ? { Cookie: cookieHeader } : {})
+        },
+        redirect: "follow",
+        ...(dispatcher ? { dispatcher } : {})
+      } as RequestInit)
+    );
 
     if (!response.ok) {
-      throw new Error(`Page fetch failed: ${response.status}`);
+      throw new Error(`Item page fetch failed: ${response.status} ${response.statusText}`);
     }
 
-    const html = await response.text();
-    this.playwrightAuth.incrementRequestCount(country);
+    return response.text();
+  }
+
+  /**
+   * Structured fields come from the page's <script type="application/ld+json">
+   * block. The rest (seller id, favourite count, catalog id, brand id, size)
+   * only exist inside the React Server Component payload, which is JSON
+   * embedded as an escaped JS string literal, so its quotes appear in the raw
+   * HTML as \" - hence the backslash-escaped patterns below.
+   */
+  private async scrapeItemPage(id: number, country: string): Promise<any> {
+    const baseUrl = getBaseUrl(country);
+    const html = await this.fetchItemPage(id, country);
 
     const ldJsonMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
-    const ldJson = ldJsonMatch ? JSON.parse(ldJsonMatch[1]) : null;
+    const ldJson = ldJsonMatch ? safeJsonParse(ldJsonMatch[1]) : null;
 
-    const itemDataMatch = html.match(/"item":\{"id":\d+,"title":"[^"]*","catalog_id":\d+[\s\S]*?"currency":"[A-Z]+"/);
-    let rscItem: any = null;
-
-    if (itemDataMatch) {
-      const startIdx = html.indexOf(itemDataMatch[0]) - 1;
-      rscItem = this.extractJsonFromRSC(html, startIdx + 8);
-    }
-
-    const sellerIdMatch = html.match(/"sellerId":(\d+)/);
-    const sellerId = sellerIdMatch ? parseInt(sellerIdMatch[1], 10) : 0;
+    const sellerIdMatch = html.match(/\\"seller_id\\":\\"?(\d+)\\"?/);
+    const favouriteMatch = html.match(/\\"favourite_count\\":(\d+)/);
+    const categoryIdMatch = html.match(/\\"catalog_id\\":\\?"?(\d+)\\?"?/);
+    const brandIdMatch = html.match(/\\"code\\":\\"summary_brand\\",\\"id\\":\\"(\d+)\\"/);
+    const sizeMatch = html.match(/\\"code\\":\\"size\\",\\"data\\":\{\\"id\\":\d+,\\"title\\":\\"[^"]*?\\",\\"value\\":\\"([^"]+?)\\"/);
 
     const photos: string[] = [];
-    const photoMatches = html.matchAll(/"url":"(https:\/\/images1\.vinted\.net\/[^"]*\/f800\/[^"]+)"/g);
-    for (const match of photoMatches) {
+    for (const match of html.matchAll(/\\"url\\":\\"(https:\/\/images1\.vinted\.net\/[^"\\]*\/f800\/[^"\\]+)\\"/g)) {
       if (!photos.includes(match[1])) {
         photos.push(match[1]);
       }
     }
 
-    const brandMatch = html.match(/"code":"summary_brand","style":"body".*?"value":"([^"]+)"/);
+    const sellerId = sellerIdMatch ? parseInt(sellerIdMatch[1], 10) : 0;
 
-    const item = {
+    return {
       id,
-      url: ldJson?.offers?.url || `${baseUrl}/items/${id}`,
-      title: ldJson?.name || rscItem?.title || "",
-      description: ldJson?.description || rscItem?.description || "",
+      url: ldJson?.offers?.url || buildItemPageUrl(id, country),
+      title: ldJson?.name || "",
+      description: ldJson?.description || "",
       price: Number(ldJson?.offers?.price || 0),
       currency: ldJson?.offers?.priceCurrency || "EUR",
       originalPrice: null,
       country,
-      brand: ldJson?.brand?.name || brandMatch?.[1] || null,
-      brandId: null,
+      brand: ldJson?.brand?.name || null,
+      brandId: brandIdMatch ? parseInt(brandIdMatch[1], 10) : null,
       category: ldJson?.category || null,
-      categoryId: rscItem?.catalog_id || null,
-      size: null,
+      categoryId: categoryIdMatch ? parseInt(categoryIdMatch[1], 10) : null,
+      size: sizeMatch?.[1] || null,
       condition: ldJson?.offers?.itemCondition?.replace("Condition", "") || null,
       color: ldJson?.color || null,
       photos: photos.length > 0 ? photos : ldJson?.image ? [ldJson.image] : [],
-      favouriteCount: 0,
+      favouriteCount: favouriteMatch ? parseInt(favouriteMatch[1], 10) : 0,
+      // ponytail: the item page no longer carries view count or timestamps.
       viewCount: 0,
-      isSold: ldJson?.offers?.availability === "OutOfStock" || rscItem?.is_closed || false,
+      isSold: ldJson?.offers?.availability === "OutOfStock",
       soldAt: null,
       createdAt: "",
       updatedAt: "",
@@ -640,69 +661,10 @@ export class VintedAPIClient {
         followerCount: 0,
         lastSeenAt: null,
         country,
-        profileUrl: `${baseUrl}/member/${sellerId}`
+        profileUrl: sellerId ? `${baseUrl}/member/${sellerId}` : ""
       },
       scrapedAt: new Date().toISOString()
     };
-
-    const attrSizeMatch = html.match(/"code":"size"[^}]*"value":"([^"]+)"/);
-    if (attrSizeMatch) {
-      item.size = attrSizeMatch[1];
-    }
-
-    const sizeLineMatch = html.match(/"elements":\[\{"type":"text","value":"([^"]+)","style":"body"\}/);
-    if (sizeLineMatch && !item.size) {
-      item.size = sizeLineMatch[1];
-    }
-
-    return item;
-  }
-
-  private extractJsonFromRSC(html: string, startIdx: number): any {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    const start = startIdx;
-
-    for (let i = startIdx; i < html.length && i < startIdx + 10000; i += 1) {
-      const ch = html[i];
-
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-
-      if (inString) {
-        continue;
-      }
-
-      if (ch === "{" || ch === "[") {
-        depth += 1;
-      }
-
-      if (ch === "}" || ch === "]") {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            return JSON.parse(html.slice(start, i + 1));
-          } catch {
-            return null;
-          }
-        }
-      }
-    }
-
-    return null;
   }
 
   private getProxyDispatcher(): unknown {
@@ -722,6 +684,14 @@ export class VintedAPIClient {
     }
 
     return undefined;
+  }
+}
+
+function safeJsonParse(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

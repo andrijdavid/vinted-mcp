@@ -2,14 +2,18 @@ import type { VintedAPIClient } from "../vinted-core";
 
 export const getSellerTool = {
   name: "get_seller",
-  description: "Get seller profile, stats, reviews, and recent items from Vinted.",
+  description: "Get seller profile, stats, recent reviews and recent items from Vinted. Rating is on a 0-5 scale.",
   inputSchema: {
     type: "object",
     properties: {
       sellerId: { type: "integer", description: "Vinted seller/user ID" },
       url: { type: "string", description: "Vinted seller profile URL (alternative to sellerId)" },
       country: { type: "string", description: "Country code", default: "fr" },
-      includeItems: { type: "boolean", description: "Include seller items listing", default: true },
+      includeItems: {
+        type: "boolean",
+        description: "Include the seller's listings. Vinted returns an empty wardrobe to anonymous callers, so this needs a logged-in session (vinted-mcp login).",
+        default: true
+      },
       itemLimit: { type: "integer", description: "Max items to include", default: 20 }
     }
   }
@@ -46,9 +50,13 @@ export async function handleGetSeller(client: VintedAPIClient, args: any): Promi
     followingCount: seller.followingCount,
     country: seller.country,
     city: seller.city,
-    memberSince: seller.createdAt,
-    verifications: seller.verifications
+    verifications: seller.verifications,
+    recentReviews: seller.reviews.slice(0, 5)
   };
+
+  if (seller.createdAt) {
+    result.memberSince = seller.createdAt;
+  }
 
   if (args.includeItems !== false) {
     result.recentItems = seller.items.slice(0, args.itemLimit || 20).map((item: any) => ({

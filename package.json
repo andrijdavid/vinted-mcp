@@ -1,6 +1,6 @@
 {
   "name": "@andrijdavid/vinted-mcp",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "MCP Server for Vinted marketplace — search items, compare prices, analyze sellers across 19 countries.",
   "mcpName": "io.github.andrijdavid/vinted-mcp",
   "main": "dist/bundle.js",

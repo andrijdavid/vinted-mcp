@@ -2,7 +2,8 @@ import type { VintedAPIClient } from "../vinted-core";
 
 export const getItemTool = {
   name: "get_item",
-  description: "Get full details of a Vinted item by ID or URL. Returns price, description, photos, seller info.",
+  description:
+    "Get full details of a Vinted item by ID or URL. Returns price, description, photos and seller info. Vinted removed the item API, so this reads the public item page: it is slower than search and carries no view count or listing date.",
   inputSchema: {
     type: "object",
     properties: {
@@ -46,15 +47,15 @@ export async function handleGetItem(client: VintedAPIClient, args: any): Promise
       color: item.color,
       photos: item.photos,
       favourites: item.favouriteCount,
-      views: item.viewCount,
       isSold: item.isSold,
-      createdAt: item.createdAt,
       url: item.url,
       seller: {
+        id: item.seller.id,
         username: item.seller.username,
         rating: item.seller.rating,
         ratingCount: item.seller.ratingCount,
         itemCount: item.seller.itemCount,
+        followerCount: item.seller.followerCount,
         profileUrl: item.seller.profileUrl
       }
     },

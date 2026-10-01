@@ -186,8 +186,8 @@ Example client config with env auth:
 
 ## Signing in
 
-Search and price tools work anonymously. Anything tied to your account (`like_item`) needs a
-logged-in session. Run this once per country:
+Search and price tools work anonymously. Anything tied to your account (`like_item`), plus a
+seller's own listings in `get_seller`, needs a logged-in session. Run this once per country:
 
 ```bash
 npx @andrijdavid/vinted-mcp login --country fr
@@ -230,11 +230,14 @@ Search listings with filters like country, price range, brand IDs, category, con
 
 ### `get_item`
 
-Get item details by `itemId` or `url`.
+Get item details by `itemId` or `url`. Vinted retired the item API, so this reads the public item
+page instead: it is slower than search, and view counts and listing dates are no longer available.
 
 ### `get_seller`
 
-Get seller profile data and optional recent items by `sellerId` or `url`.
+Get seller profile data, recent reviews and optional recent items by `sellerId` or `url`. The rating
+is on a 0-5 scale. Recent items come from the seller's wardrobe, which Vinted returns empty to
+anonymous callers, so that part needs a logged-in session.
 
 ### `compare_prices`
 
@@ -242,7 +245,8 @@ Compare average and median prices for a query across countries.
 
 ### `get_trending`
 
-Return trending items by engagement score.
+Return recently listed items ranked by favourites, then views. The catalogue API no longer returns
+listing timestamps or view counts, so the ranking is coarser than it used to be.
 
 ### `like_item`
 

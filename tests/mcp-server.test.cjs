@@ -43,6 +43,7 @@ test("lists tools", async () => {
     "get_item",
     "get_seller",
     "get_trending",
+    "like_item",
     "search_items"
   ]);
 });
@@ -177,6 +178,8 @@ test(
     const search = JSON.parse(getText(searchResult));
     assert.ok(Array.isArray(search.items));
     assert.ok(search.items.length > 0);
+    assert.ok(search.items[0].brand, "search results should carry a brand");
+    assert.ok(parseFloat(search.items[0].price) > 0, "search results should carry a price");
 
     const itemId = search.items[0].id;
     assert.equal(typeof itemId, "number");
@@ -188,8 +191,12 @@ test(
     assert.equal(itemResult.isError, undefined);
     const item = JSON.parse(getText(itemResult));
     assert.equal(item.id, itemId);
+    assert.ok(item.title, "item detail should carry a title");
+    assert.ok(item.description, "item detail should carry a description");
+    assert.ok(item.seller.username, "item detail should carry a resolved seller");
 
-    const sellerId = item?.seller?.id && item.seller.id > 0 ? item.seller.id : 1;
+    const sellerId = item.seller.id;
+    assert.ok(sellerId > 0, "item detail should carry a seller id");
     const sellerResult = await client.callTool({
       name: "get_seller",
       arguments: { sellerId, country: "fr", includeItems: true, itemLimit: 2 }
@@ -197,6 +204,9 @@ test(
     assert.equal(sellerResult.isError, undefined);
     const seller = JSON.parse(getText(sellerResult));
     assert.equal(typeof seller.id, "number");
+    assert.equal(seller.username, item.seller.username);
+    assert.ok(seller.rating === null || (seller.rating >= 0 && seller.rating <= 5), "rating is on a 0-5 scale");
+    assert.ok(Array.isArray(seller.recentReviews));
 
     const compareResult = await client.callTool({
       name: "compare_prices",

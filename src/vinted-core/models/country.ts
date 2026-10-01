@@ -41,3 +41,7 @@ export function getCountry(code: string): VintedCountry {
 export function getBaseUrl(country: string): string {
   return `https://${getCountry(country).domain}`;
 }
+
+export function getApiBaseUrl(country: string): string {
+  return `https://${getCountry(country).domain.replace(/^www\./, "api.")}`;
+}

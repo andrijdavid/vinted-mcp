@@ -6,12 +6,12 @@
     "url": "https://github.com/andrijdavid/vinted-mcp",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@andrijdavid/vinted-mcp",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       },
@@ -43,6 +43,20 @@
           "isRequired": false,
           "format": "string",
           "isSecret": true
+        },
+        {
+          "name": "VINTED_AUTH_REFRESH_TOKEN",
+          "description": "Optional refresh token for env auth mode",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "VINTED_PROFILE_DIR",
+          "description": "Optional root directory for browser profiles created by 'vinted-mcp login' (default ~/.vinted-mcp)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
         },
         {
           "name": "VINTED_PROXY_URL",

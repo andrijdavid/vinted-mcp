@@ -26,12 +26,10 @@ export interface SearchParams {
   categoryId?: number;
   brandIds?: number[];
   sizeIds?: number[];
-  userId?: number;
   priceMin?: number;
   priceMax?: number;
   condition?: Array<"new_with_tags" | "new_without_tags" | "very_good" | "good" | "satisfactory">;
   sortBy?: "relevance" | "price_low_to_high" | "price_high_to_low" | "newest_first";
   page?: number;
   perPage?: number;
-  isSold?: boolean;
 }
