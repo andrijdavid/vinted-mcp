@@ -10,6 +10,7 @@ This is a development implementation with explicit acceptance gaps, not a claim 
 - Existing live protocol flow passed all six tests: search, item, seller, price comparison and trending, in addition to discovery/resources/prompts. The tests used an isolated anonymous HTTP profile path rather than the active user's browser profile.
 - The real public catalog page established the category snapshot and revealed incorrect IDs in the previous static resource. Item-page parsing was also checked against actual public JSON-LD and React payloads.
 - A fresh package installation was exercised separately, including the native image dependency and stdio tool discovery. No package was published to npm.
+- The real-photo export fallback was also run against an actual listing: three JPEGs and a provenance manifest were saved outside the repository. All three decoded successfully, stayed within the resolution limit and retained the correct listing/item mapping. Actual attachment and viewing in the user's ChatGPT conversation remain a separate acceptance step.
 
 ## Controlled live outfit run
 
