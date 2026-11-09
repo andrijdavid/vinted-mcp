@@ -27,10 +27,7 @@ jobs:
           registry-url: ${{ env.REGISTRY_URL }}
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Install TypeScript for build
-        run: npm install --no-save typescript
+        run: npm ci
 
       - name: Build package
         run: npm run build && npm run bundle

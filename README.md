@@ -308,3 +308,41 @@ RUN_LIVE_MCP_TESTS=1 npm test
 Licensed under `AGPL-3.0-or-later`.
 
 See `LICENSE.md`.
+
+## Visual outfit search (development extension)
+
+Search real listings for an outfit, inspect their actual photos, and assemble provisional combinations within a budget. ChatGPT interprets the reference upload and performs the image comparisons; the MCP server handles retrieval, filters, evidence, risk and budget calculations. No paid AI API or GPU is required.
+
+New tools:
+
+- `get_item_images`: real listing photos as bounded MCP image content or binary resources, with source metadata.
+- `search_similar_items`: multilingual strategies, official men's categories, exact size checks, deduplication, metadata ranking and risk flags.
+- `assess_visual_match`: category-weighted, explained scores from actual image observations supplied by ChatGPT or the user.
+- `find_original_product`: verifiable manufacturer/code evidence; explicit exact/probable/similar/unidentified outcomes.
+- `find_similar_outfit`: multiple garment searches, alternatives and budget combinations with unknown fees left unknown.
+
+`search_items` keeps its existing parameters and result fields and adds `includePhotos`, `includeDimensions`, `includeSellerSummary`, `includeMaterials`, `includeProductIdentifiers`, `page`, `perPage`, `sizeIds`, and `size`. Details absent from Vinted are not invented. Failed item retrieval now produces an error rather than a fictitious €0 listing.
+
+Example ChatGPT request, **with the actual outfit photo attached**:
+
+> Zoek deze outfit op Vinted Nederland. Truimaat L, jeans W32, schoenen EU 46, totaalbudget €100. Interpreteer eerst de foto. Gebruik find_similar_outfit, bekijk echte advertentiefoto's met get_item_images en geef alleen visuele scores voor foto's die je daadwerkelijk kunt zien. Controleer maat, staat, verkoper en onbekende kosten. Laat alternatieven en onzekerheden zien.
+
+A focused tool call:
+
+```json
+{
+  "category": "sweater",
+  "country": "nl",
+  "size": "L",
+  "maxPrice": 30,
+  "reference": {"color": "dark brown", "texture": "waffle", "neckline": "crewneck", "fit": "relaxed"},
+  "exclusions": ["zip", "logo"],
+  "limit": 8
+}
+```
+
+Search scores are metadata-only. To compare visually, request `get_item_images` with `includeContent: true` for the selected listing, inspect both reference and candidate images, then submit the observations to `assess_visual_match`. If the ChatGPT host hides MCP images, export those exact photos with `node scripts/export-item-images.cjs ITEM_ID nl` and attach the exported JPEGs to ChatGPT. The current connector's model-visible image support must be tested; a photo URL alone does not establish visual access.
+
+Original product identification can use ChatGPT browsing to discover official sources. Blocked pages and missing codes remain uncertain; manufacturer photos never replace listing photos. Budget results distinguish listing subtotal, caller-supplied cost estimates and unknown checkout totals.
+
+See [architecture, API contracts, image fallback, limits and migration](docs/visual-outfit-search.md), [actual verification results](docs/verification-results.md), and the explicitly text-only [example outfit fixture](tests/fixtures/example-outfit.json). The active installation and tunnel must be switched only after explicit approval.

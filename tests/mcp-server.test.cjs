@@ -39,12 +39,17 @@ test("lists tools", async () => {
   const names = (response.tools || []).map((tool) => tool.name);
 
   assert.deepEqual(names.sort(), [
+    "assess_visual_match",
     "compare_prices",
+    "find_original_product",
+    "find_similar_outfit",
     "get_item",
+    "get_item_images",
     "get_seller",
     "get_trending",
     "like_item",
-    "search_items"
+    "search_items",
+    "search_similar_items"
   ]);
 });
 
@@ -61,6 +66,7 @@ test("lists resource templates", async () => {
   const templateUris = templates.map((template) => template.uriTemplate).sort();
 
   assert.deepEqual(templateUris, [
+    "vinted://image/{country}/{itemId}/{index}",
     "vinted://item/{country}/{itemId}",
     "vinted://search/{country}/{query}",
     "vinted://seller/{country}/{sellerId}"

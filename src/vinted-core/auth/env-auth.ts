@@ -90,6 +90,8 @@ export class EnvAuth {
         .join("; ");
 
       const res = await fetch(`${baseUrl}/oauth/token`, {
+        signal: AbortSignal.timeout(15_000),
+        redirect: "error",
         method: "POST",
         headers: {
           "Content-Type": "application/json",

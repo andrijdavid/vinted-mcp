@@ -34,10 +34,12 @@ export class HttpAuth {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": `${countryInfo.language},en;q=0.5`
       },
-      redirect: "follow",
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
       ...(dispatcher ? { dispatcher } : {})
     } as RequestInit);
 
+    if (!homepageRes.ok) throw new Error(`Vinted session request failed (${homepageRes.status}); no bypass attempted`);
     const cookies = parseCookiesFromSetCookie(parseSetCookieHeaders(homepageRes.headers));
     const html = await homepageRes.text();
 
@@ -62,6 +64,8 @@ export class HttpAuth {
     if (!accessToken) {
       try {
         const tokenRes = await fetch(`${baseUrl}/api/v2/users/current`, {
+          signal: AbortSignal.timeout(15_000),
+          redirect: "error",
           headers: {
             "User-Agent": ua,
             "Accept": "application/json, text/plain, */*",

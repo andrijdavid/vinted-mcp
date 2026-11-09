@@ -1,7 +1,7 @@
 {
   "name": "@andrijdavid/vinted-mcp",
   "version": "0.2.0",
-  "description": "MCP Server for Vinted marketplace — search items, compare prices, analyze sellers across 19 countries.",
+  "description": "MCP Server for Vinted marketplace \u2014 search items, compare prices, analyze sellers across 19 countries.",
   "mcpName": "io.github.andrijdavid/vinted-mcp",
   "main": "dist/bundle.js",
   "bin": {
@@ -10,14 +10,17 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-      "bundle": "npx --yes esbuild src/bin/cli.ts --bundle --platform=node --target=node22 --outfile=dist/bundle.js --format=cjs --external:@modelcontextprotocol/sdk --external:playwright --external:playwright-core --external:playwright-extra --external:puppeteer-extra-plugin-stealth",
+    "bundle": "esbuild src/bin/cli.ts --bundle --platform=node --target=node22 --outfile=dist/bundle.js --format=cjs --external:@modelcontextprotocol/sdk --external:playwright --external:playwright-core --external:playwright-extra --external:puppeteer-extra-plugin-stealth --external:sharp",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true }); require('fs').rmSync('dist-ts', { recursive: true, force: true });\"",
     "start": "node dist/bundle.js",
     "test": "node --test tests/*.test.cjs",
-    "publish:canary:local": "bash scripts/publish-canary-local.sh"
+    "publish:canary:local": "bash scripts/publish-canary-local.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ajv": "^8.20.0",
+    "sharp": "^0.35.5"
   },
   "keywords": [
     "vinted",
@@ -55,6 +58,13 @@
     "dist/bundle.js",
     "README.md",
     "LICENSE.md",
-    ".env.example"
-  ]
+    ".env.example",
+    "scripts/export-item-images.cjs",
+    "docs/visual-outfit-search.md",
+    "docs/verification-results.md"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
 }

@@ -1,3 +1,7 @@
+import { money, textValue } from "../../visual/common";
+import { isCondition, normalizeSize, sizeSystem } from "../../visual/size";
+import { extractIdentifiers } from "../../visual/identifiers";
+import { photoMetadata, PhotoMetadata } from "../../visual/photos";
 import { getBaseUrl } from "../models/country";
 
 export interface ParsedSeller {
@@ -17,7 +21,7 @@ export interface ParsedItem {
   url: string;
   title: string;
   description: string;
-  price: number;
+  price: number | null;
   currency: string;
   originalPrice: number | null;
   country: string;
@@ -29,6 +33,13 @@ export interface ParsedItem {
   condition: string | null;
   color: string | null;
   photos: string[];
+  photoMetadata?: PhotoMetadata[];
+  materials?: string[];
+  dimensions?: Record<string, unknown> | null;
+  productIdentifiers?: ReturnType<typeof extractIdentifiers>;
+  sizeSystem?: string | null;
+  source?: string;
+  availability?: "available" | "sold" | "unknown";
   favouriteCount: number;
   viewCount: number;
   isSold: boolean;
@@ -45,37 +56,50 @@ export function parseItem(raw: any, country: string): ParsedItem {
   // svc-catalogue results carry no structured brand/size/condition. They only
   // exist baked into item_box's display strings: first_line is the brand,
   // second_line is "size · condition".
-  const [boxSize, boxCondition] = String(raw.item_box?.second_line || "").split(" \u00b7 ");
+  const box = raw.item_box || raw.itemBox || {};
+  const lines = String(box.second_line || box.secondLine || "").split(/\s*[·•]\s*/);
+  const boxSize = lines.find(v => normalizeSize(v));
+  const boxCondition = lines.find(v => isCondition(v));
+  const url = toAbsoluteUrl(raw.url, baseUrl) || `${baseUrl}/items/${raw.id}`;
+  const retrievedAt = new Date().toISOString();
+  const photos = photoMetadata(raw, raw.id, url, retrievedAt);
+  const rawSize = textValue(raw.size_title || raw.size);
+  const size = rawSize && !isCondition(rawSize) ? rawSize : boxSize || null;
+  const sold = raw.is_closed === true || raw.is_sold === true || raw.status === "sold";
+  const statusCondition = typeof raw.status === "string" && (isCondition(raw.status) || ["new_with_tags", "new_without_tags", "very_good", "good", "satisfactory"].includes(raw.status)) ? raw.status : null;
 
   return {
     id: raw.id,
-    url: toAbsoluteUrl(raw.url, baseUrl) || `${baseUrl}/items/${raw.id}`,
+    url,
     title: raw.title || "",
     description: raw.description || "",
-    price: parseFloat(raw.price?.amount || raw.price || raw.total_item_price?.amount || "0"),
-    currency: raw.price?.currency_code || raw.currency || "EUR",
-    originalPrice: raw.original_price ? parseFloat(raw.original_price.amount || raw.original_price) : null,
+    price: money(raw.price?.amount ?? raw.price ?? raw.priceWithDiscount?.amount ?? raw.total_item_price?.amount),
+    currency: raw.price?.currency_code || raw.price?.currencyCode || raw.currency || "",
+    originalPrice: money(raw.original_price?.amount ?? raw.original_price),
     country,
-    brand: raw.brand_title || raw.brand || raw.item_box?.first_line || null,
+    brand: textValue(raw.brand_title || raw.brand || box.first_line || box.firstLine),
     brandId: raw.brand_id || raw.brand_dto?.id || null,
-    category: raw.catalog_title || raw.category || null,
+    category: textValue(raw.catalog_title || raw.category),
     categoryId: raw.catalog_id || raw.category_id || null,
-    size: raw.size_title || raw.size || boxSize?.trim() || null,
-    condition: raw.status || raw.condition || boxCondition?.trim() || null,
-    color: raw.color1 || raw.color || null,
-    photos: (raw.photos || raw.photo_urls || [])
-      .map((photo: any) =>
-        typeof photo === "string" ? photo : photo.url || photo.full_size_url || photo.thumbnails?.[0]?.url || ""
-      )
-      .filter(Boolean),
+    size,
+    sizeSystem: sizeSystem(size),
+    condition: textValue(raw.status_title || raw.condition || statusCondition) || boxCondition || null,
+    color: textValue(raw.color1) || textValue(raw.color),
+    materials: (Array.isArray(raw.materials) ? raw.materials : [raw.material]).map(textValue).filter(Boolean) as string[],
+    dimensions: raw.dimensions && typeof raw.dimensions === "object" ? raw.dimensions : null,
+    productIdentifiers: extractIdentifiers(raw),
+    source: "vinted",
+    availability: sold ? "sold" : raw.is_closed === false || raw.is_sold === false ? "available" : "unknown",
+    photos: photos.map(p => p.url),
+    photoMetadata: photos,
     favouriteCount: raw.favourite_count || raw.favorites_count || 0,
     viewCount: raw.view_count || 0,
-    isSold: raw.is_closed || raw.is_sold || raw.status === "sold" || false,
+    isSold: sold,
     soldAt: raw.closed_at || raw.sold_at || null,
     createdAt: raw.created_at_ts || raw.created_at || "",
     updatedAt: raw.updated_at_ts || raw.updated_at || raw.created_at_ts || "",
     seller: parseSeller(seller, country),
-    scrapedAt: new Date().toISOString()
+    scrapedAt: retrievedAt
   };
 }
 
@@ -85,14 +109,14 @@ function toStars(reputation: unknown): number | null {
   if (!Number.isFinite(value)) {
     return null;
   }
-  return Math.round(value * 5 * 10) / 10;
+  return value >= 0 && value <= 1 ? Math.round(value * 5 * 10) / 10 : null;
 }
 
 function toAbsoluteUrl(url: unknown, baseUrl: string): string {
   if (typeof url !== "string" || !url) {
     return "";
   }
-  return url.startsWith("http") ? url : `${baseUrl}${url}`;
+  try { const parsed = new URL(url, baseUrl); return parsed.protocol === "https:" && parsed.hostname === new URL(baseUrl).hostname ? parsed.href : ""; } catch { return ""; }
 }
 
 export function parseSeller(raw: any, country: string): ParsedSeller {
@@ -100,7 +124,7 @@ export function parseSeller(raw: any, country: string): ParsedSeller {
   return {
     id: raw.id || 0,
     username: raw.login || raw.username || "",
-    rating: toStars(raw.feedback_reputation),
+    rating: raw.feedback_reputation != null ? toStars(raw.feedback_reputation) : (typeof raw.rating === "number" && raw.rating >= 0 && raw.rating <= 5 ? raw.rating : null),
     ratingCount: raw.feedback_count || raw.rating_count || 0,
     itemCount: raw.item_count || raw.items_count || 0,
     followerCount: raw.followers_count || raw.follower_count || 0,
@@ -116,7 +140,7 @@ export function parseSellerProfile(raw: any, country: string) {
     id: raw.id,
     username: raw.login || raw.username || "",
     profileUrl: raw.profile_url || `${baseUrl}/member/${raw.id}-${raw.login || ""}`,
-    rating: toStars(raw.feedback_reputation),
+    rating: raw.feedback_reputation != null ? toStars(raw.feedback_reputation) : (typeof raw.rating === "number" && raw.rating >= 0 && raw.rating <= 5 ? raw.rating : null),
     ratingCount: raw.feedback_count || 0,
     itemCount: raw.item_count || raw.items_count || 0,
     soldItemCount: raw.given_item_count || raw.sold_item_count || 0,

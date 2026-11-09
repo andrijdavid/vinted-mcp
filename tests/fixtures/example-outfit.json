@@ -1,0 +1,11 @@
+{
+  "country": "nl",
+  "budget": 100,
+  "components": [
+    { "id": "sweater", "category": "sweater", "size": "L", "reference": { "color": "dark brown", "texture": "textured", "neckline": "crewneck", "fit": "relaxed" }, "maxPrice": 30, "strategies": ["bruine trui", "brown crewneck knit", "pull marron"], "exclusions": ["zip", "hood"], "limit": 8 },
+    { "id": "tshirt", "category": "tshirt", "size": "L", "reference": { "color": "white", "neckline": "crewneck" }, "maxPrice": 8, "strategies": ["wit t shirt", "white tee", "t shirt blanc"], "limit": 5 },
+    { "id": "jeans", "category": "jeans", "size": "W32", "reference": { "color": "light beige", "fit": "baggy", "wash": "washed" }, "maxPrice": 30, "strategies": ["beige baggy jeans", "beige jeans", "ecru wide jeans"], "exclusions": ["slim"], "limit": 8 },
+    { "id": "boots", "category": "boots", "size": "EU46", "reference": { "color": "wheat", "material": "nubuck", "shoeModel": "boots" }, "brandPreferences": ["Timberland"], "maxPrice": 45, "strategies": ["Timberland wheat", "Timberland beige", "boots camel"], "limit": 8 },
+    { "id": "chain", "category": "accessory", "reference": { "color": "gold", "details": "subtle thin chain" }, "maxPrice": 8, "strategies": ["goudkleurige ketting", "gold chain", "collier dore"], "exclusions": ["plastic", "costume", "tie"], "limit": 5 }
+  ]
+}

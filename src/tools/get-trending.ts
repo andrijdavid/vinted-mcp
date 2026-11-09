@@ -32,7 +32,7 @@ export async function handleGetTrending(client: VintedAPIClient, args: any): Pro
     .map((item: any) => ({
       id: item.id,
       title: item.title,
-      price: `${item.price} ${item.currency}`,
+      price: item.price == null ? null : `${item.price} ${item.currency}`,
       brand: item.brand,
       favourites: item.favouriteCount || 0,
       views: item.viewCount || 0,
