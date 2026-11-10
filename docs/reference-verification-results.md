@@ -16,6 +16,8 @@ The optional Brave adapter uses the real documented interface but only fixture r
 
 Separately, `RUN_LIVE_MCP_TESTS=1 node --test tests/mcp-server.test.cjs` passed **6/6**, including real search/item/seller/price-comparison/trending calls. It ran from an isolated built copy. No live favourite, purchase, payment or seller message occurred.
 
+Upstream [PR checks](https://github.com/andrijdavid/vinted-mcp/pull/3/checks) reported `action_required`: Main Validation was gated on maintainer approval and had **zero jobs executed**, so upstream CI is not claimed as passed. Manual dispatch on the fork returned 404 because `main-validation.yml` is absent from its default branch; no default branch or workflow policy was changed. Local checks and the fresh package smoke test passed independently. A maintainer must approve upstream Actions before that CI gate can close.
+
 ## Controlled live Vinted checks
 
 Actual connected `search_items`, `get_item` and `get_item_images` were used read-only before isolated new-tool probes. Examples:
