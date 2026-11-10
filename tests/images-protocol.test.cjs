@@ -85,7 +85,7 @@ test('MCP client negotiates tools, mixed content, binary resources and errors en
  const client=new Client({name:'visual-protocol-test',version:'1'},{capabilities:{}});
  await server.connect(serverTransport);await client.connect(clientTransport);
  try{
-  const tools=await client.listTools();assert.equal(tools.tools.length,11);
+  const tools=await client.listTools();assert.equal(tools.tools.length,12);
   assert.ok(tools.tools.filter(t=>['get_item_images','find_original_product','search_similar_items','find_similar_outfit','assess_visual_match'].includes(t.name)).every(t=>t.annotations.readOnlyHint));
   const result=await client.callTool({name:'get_item_images',arguments:{itemId:42,country:'nl',includeContent:true}});assert.equal(result.content[1].type,'image');assert.ok(result.structuredContent.images[0].contentIncluded);
   const resource=await client.readResource({uri:'vinted://image/nl/42/0'});assert.equal(resource.contents[0].mimeType,'image/jpeg');assert.ok(resource.contents[0].blob);

@@ -2,9 +2,11 @@ import type { VintedAPIClient } from "../vinted-core";
 import { GARMENTS } from "../visual/catalog";
 import { FEATURES } from "../visual/ranking";
 import { searchSimilar } from "../visual/search";
+import { enrichSelectedReferences, lazyReferenceProperties, lazyReferenceDefinitions } from "./find-product-reference-images";
 
 export const referenceSchema = { type: "object", additionalProperties: false, properties: Object.fromEntries(FEATURES.map(key => [key, { type: "string", maxLength: 300 }])) };
 export const similarProperties = {
+  ...lazyReferenceProperties,
   category: { type: "string", enum: [...GARMENTS], description: "Men's garment family; official catalog filtering is always applied" },
   reference: referenceSchema,
   ...referenceSchema.properties,
@@ -23,6 +25,10 @@ export const similarProperties = {
 export const searchSimilarItemsTool = {
   name: "search_similar_items", description: "Find men's clothing candidates using bounded multilingual searches, official categories, exact size checks, deduplication, metadata relevance, real photo URLs and seller/condition risk. Does NOT claim visual similarity until actual photos are inspected. Fewer than five eligible results is reported explicitly.",
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-  inputSchema: { type: "object", properties: similarProperties, required: ["category"] }
+  inputSchema: { type: "object", $defs: lazyReferenceDefinitions, properties: similarProperties, required: ["category"] }
 };
-export async function handleSearchSimilarItems(client: VintedAPIClient, args: any): Promise<string> { return JSON.stringify(await searchSimilar(client, args)); }
+export async function handleSearchSimilarItems(client: VintedAPIClient, args: any): Promise<string> {
+  const result = await searchSimilar(client, args);
+  await enrichSelectedReferences(client, result.candidates, { ...args, country: result.country });
+  return JSON.stringify(result);
+}

@@ -138,3 +138,8 @@ Development is isolated from `/Users/neo/services/vinted-mcp-source/start-stdio.
 Prepare a **separate permanent release directory** from the reviewed branch, run `npm ci`, typecheck/build/bundle/tests, and verify its stdio server there. Preserve the current tunnel command/profile and installed bundle as the rollback target. Only after explicit approval, point the managed runtime or tunnel launch command at the new directory; do not assume whether the launch is file-based or managed. Refresh ChatGPT's tool list and execute the image acceptance checks above. Roll back by restoring the previously recorded launch target and refreshing tools. No database migration or new paid-service credentials are needed.
 
 Future improvements: measured image compatibility for the actual connector version, larger image-labelled relevance evaluations, manufacturer adapters/catalog coverage, verified size-ID discovery, richer measurement parsing, condition-damage review and checkout-authoritative cost quotes when an allowed interface provides them.
+
+
+## Product and on-model reference extension — 2026-11-10
+
+The server now has twelve tools, including `find_product_reference_images`. See [the reference-image contract, strict identification states, provider/source adapters and staged activation/rollback](product-references.md). `find_original_product` retains legacy fields while adding the strict status and broader sources. Search/outfit/assessment tools have bounded, opt-in `includeReferenceImages` enrichment. The [new verification report](reference-verification-results.md) separates current live observations from the historical report above.

@@ -42,6 +42,7 @@ test("lists tools", async () => {
     "assess_visual_match",
     "compare_prices",
     "find_original_product",
+    "find_product_reference_images",
     "find_similar_outfit",
     "get_item",
     "get_item_images",

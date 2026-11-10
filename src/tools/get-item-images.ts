@@ -56,6 +56,7 @@ export async function handleGetItemImages(client: VintedAPIClient, args: any, lo
   }
   if (!photos.length) warnings.push("No listing photos available; visual assessment is unavailable");
   const data = { itemId: id, listingUrl: item.url, country, images, warnings,
+    referenceImageToolArguments: { itemId: id, country, preferOnModel: true },
     visualAccess: args.includeContent && blocks.length ? "image_bytes_returned_host_visibility_unverified" : "metadata_only",
     fallback: "Use scripts/export-item-images.cjs to save these exact listing photos for attachment in ChatGPT. Inspect only attached or visibly received images." };
   return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }, ...blocks] };

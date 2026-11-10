@@ -6,11 +6,13 @@ import { optimizeOutfit, validateCosts } from "../visual/budget";
 import { visualMatch } from "../visual/ranking";
 import { similarProperties } from "./search-similar-items";
 import { visualReviewSchema } from "./assess-visual-match";
+import { enrichSelectedReferences, lazyReferenceProperties, lazyReferenceDefinitions } from "./find-product-reference-images";
 
 export const findSimilarOutfitTool = {
   name: "find_similar_outfit", description: "Coordinate 1..8 men's outfit parts, exact requested sizes, real listings/photos, risk checks and bounded budget combinations. First interpret the user's actual uploaded outfit photo in ChatGPT. Descriptions alone are metadata fixtures. Inspect candidates with get_item_images and optionally call again with visualReviews. Without image review, outfits remain provisional. Unknown fees never become exact totals. Never buys or messages sellers.",
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-  inputSchema: { type: "object", properties: {
+  inputSchema: { type: "object", $defs: lazyReferenceDefinitions, properties: {
+    ...lazyReferenceProperties,
     country: { type: "string", default: "nl" }, budget: { type: "number", minimum: 0 },
     referenceImage: { type: "string", description: "Identifier of the actual reference image ChatGPT inspected; omit for explicitly metadata-only work" },
     components: { type: "array", minItems: 1, maxItems: 8, items: { type: "object", properties: { id: { type: "string", maxLength: 80 }, ...similarProperties }, required: ["id", "category"] } },
@@ -45,8 +47,12 @@ export async function handleFindSimilarOutfit(client: VintedAPIClient, args: any
     parts.push({ id: args.components[i].id, ...result });
   }
   const optimized = optimizeOutfit(parts, args.budget, getCountry(country).currency, args.costEstimates);
+  const topIds = new Set(optimized.combinations[0]?.items.map(i => i.id) || []);
+  const selected = parts.flatMap(p => p.candidates).filter(c => topIds.has(c.id));
+  await enrichSelectedReferences(client, selected, { ...args, country });
   // Full candidate data lives once in parts; combinations reference it compactly.
-  for (const combination of optimized.combinations) combination.items = combination.items.map((i: any) => ({ componentId: i.componentId, itemId: i.id, title: i.title, url: i.url, price: i.price, currency: i.currency, size: i.size, sizeStatus: i.sizeStatus, photos: i.photos.slice(0, 2), metadataScore: i.metadataMatch.score, visualScore: i.visualMatch.score, risk: i.risk.level }));
+  for (const combination of optimized.combinations) combination.items = combination.items.map((i: any) => ({ componentId: i.componentId, itemId: i.id, title: i.title, url: i.url, price: i.price, currency: i.currency, size: i.size, sizeStatus: i.sizeStatus, photos: i.photos.slice(0, 2), metadataScore: i.metadataMatch.score, visualScore: i.visualMatch.score, risk: i.risk.level,
+    ...(selected.find(c => c.id === i.id)?.referenceImages ? { referenceImages: selected.find(c => c.id === i.id).referenceImages } : {}) }));
   return JSON.stringify({ referenceImage: args.referenceImage || null, referenceMode: args.referenceImage ? "caller_interpreted_reference_image" : "metadata_fixture_no_reference_image", country,
     appliedVisualReviews: appliedReviews.size, unusedVisualReviews: reviews.filter(r => !appliedReviews.has(r)).map(r => ({ componentId: r.componentId, itemId: r.itemId, reason: "Listing not present in current bounded search candidates" })),
     parts, ...optimized, nextStep: "Inspect actual candidate photos and reference image, submit evidence-backed visualReviews, review seller and condition flags, then verify final checkout fees. No automatic purchase or seller messages." });
