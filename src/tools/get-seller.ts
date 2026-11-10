@@ -1,3 +1,4 @@
+import { sellerRisk } from "../visual/risk";
 import type { VintedAPIClient } from "../vinted-core";
 
 export const getSellerTool = {
@@ -39,6 +40,9 @@ export async function handleGetSeller(client: VintedAPIClient, args: any): Promi
 
   const seller = await client.getSeller(sellerId, country);
   const result: any = {
+    risk: sellerRisk(seller),
+    source: "vinted",
+    fetchedAt: seller.scrapedAt,
     id: seller.id,
     username: seller.username,
     profileUrl: seller.profileUrl,
@@ -62,7 +66,7 @@ export async function handleGetSeller(client: VintedAPIClient, args: any): Promi
     result.recentItems = seller.items.slice(0, args.itemLimit || 20).map((item: any) => ({
       id: item.id,
       title: item.title,
-      price: `${item.price} ${item.currency}`,
+      price: item.price == null ? null : `${item.price} ${item.currency}`,
       brand: item.brand,
       url: item.url
     }));

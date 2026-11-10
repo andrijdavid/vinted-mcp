@@ -31,25 +31,13 @@ export class RateLimiter {
     while (this.activeCount >= this.maxConcurrency) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
     }
-
-    const now = Date.now();
-    
-    // Handle queue pause
-    if (now < this.pauseUntil) {
-      await new Promise((resolve) => setTimeout(resolve, this.pauseUntil - now));
-    }
-
-    const currentNow = Date.now();
-    const elapsed = currentNow - this.lastRequestTime;
-    const currentJitter = Math.floor(Math.random() * this.jitterMs);
-    const targetDelay = this.delayMs + currentJitter;
-
-    if (elapsed < targetDelay) {
-      await new Promise((resolve) => setTimeout(resolve, targetDelay - elapsed));
-    }
-
+    // Reserve before sleeping: otherwise simultaneous callers all see a free slot.
     this.activeCount += 1;
-    this.lastRequestTime = Date.now();
+    const now = Date.now();
+    const startAt = Math.max(now, this.pauseUntil, this.lastRequestTime + this.delayMs + Math.floor(Math.random() * this.jitterMs));
+    this.lastRequestTime = startAt;
+    if (startAt > now) await new Promise(resolve => setTimeout(resolve, startAt - now));
+    while (Date.now() < this.pauseUntil) await new Promise(resolve => setTimeout(resolve, this.pauseUntil - Date.now()));
   }
 
   private release(): void {

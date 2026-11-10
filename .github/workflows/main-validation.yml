@@ -23,10 +23,10 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build and test
-        run: npm run build && npm run bundle && npm test
+        run: npm run typecheck && npm run build && npm run bundle && npm test
 
       - name: Create npm tarball
         id: pack

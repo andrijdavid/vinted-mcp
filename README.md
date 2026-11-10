@@ -308,3 +308,51 @@ RUN_LIVE_MCP_TESTS=1 npm test
 Licensed under `AGPL-3.0-or-later`.
 
 See `LICENSE.md`.
+
+## Visual outfit search (development extension)
+
+Search real listings for an outfit, inspect their actual photos, and assemble provisional combinations within a budget. ChatGPT interprets the reference upload and performs the image comparisons; the MCP server handles retrieval, filters, evidence, risk and budget calculations. No paid AI API or GPU is required.
+
+New tools:
+
+- `get_item_images`: real listing photos as bounded MCP image content or binary resources, with source metadata.
+- `search_similar_items`: multilingual strategies, official men's categories, exact size checks, deduplication, metadata ranking and risk flags.
+- `assess_visual_match`: category-weighted, explained scores from actual image observations supplied by ChatGPT or the user.
+- `find_original_product`: code/GTIN, brand/model/color and official/retailer/archive evidence; legacy fields retained, with strict identification status added.
+- `find_product_reference_images`: source-bound product and on-model images; separate actual Vinted photos; explicit exact/probable/different-product/not-found labels; optional ChatGPT browsing handoff or opt-in Brave search.
+- `find_similar_outfit`: multiple garment searches, alternatives and budget combinations with unknown fees left unknown.
+
+`search_items` keeps its existing parameters and result fields and adds `includePhotos`, `includeDimensions`, `includeSellerSummary`, `includeMaterials`, `includeProductIdentifiers`, `page`, `perPage`, `sizeIds`, and `size`. Details absent from Vinted are not invented. Failed item retrieval now produces an error rather than a fictitious €0 listing.
+
+Example ChatGPT request, **with the actual outfit photo attached**:
+
+> Zoek deze outfit op Vinted Nederland. Truimaat L, jeans W32, schoenen EU 46, totaalbudget €100. Interpreteer eerst de foto. Gebruik find_similar_outfit, bekijk echte advertentiefoto's met get_item_images en geef alleen visuele scores voor foto's die je daadwerkelijk kunt zien. Controleer maat, staat, verkoper en onbekende kosten. Laat alternatieven en onzekerheden zien.
+
+A focused tool call:
+
+```json
+{
+  "category": "sweater",
+  "country": "nl",
+  "size": "L",
+  "maxPrice": 30,
+  "reference": {"color": "dark brown", "texture": "waffle", "neckline": "crewneck", "fit": "relaxed"},
+  "exclusions": ["zip", "logo"],
+  "limit": 8
+}
+```
+
+Search scores are metadata-only. To compare visually, request `get_item_images` with `includeContent: true` for the selected listing, inspect both reference and candidate images, then submit the observations to `assess_visual_match`. If the ChatGPT host hides MCP images, export those exact photos with `node scripts/export-item-images.cjs ITEM_ID nl` and attach the exported JPEGs to ChatGPT. The current connector's model-visible image support must be tested; a photo URL alone does not establish visual access.
+
+Original product identification can use ChatGPT browsing to discover official sources. Blocked pages and missing codes remain uncertain; manufacturer photos never replace listing photos. Budget results distinguish listing subtotal, caller-supplied cost estimates and unknown checkout totals.
+
+See [architecture, API contracts, image fallback, limits and migration](docs/visual-outfit-search.md), [actual verification results](docs/verification-results.md), and the explicitly text-only [example outfit fixture](tests/fixtures/example-outfit.json). The active installation and tunnel must be switched only after explicit approval.
+
+
+Product references are loaded only for shortlisted listings. There are now **12 tools**; the original eleven remain available. Call `find_product_reference_images` with `itemId` or `url`; defaults are `preferOnModel: true`, `maxImages: 5`, `allowSimilar: true`, `includeContent: true`. It returns separate Vinted/reference images, source links and per-image verification. `similar_reference` always means a **different product** and needs observations of both actual images. `allowSimilar: false` returns `not_found` when no supported original is found. A matching brand alone never identifies a product.
+
+No search subscription, AI API, GPU or new browser is required. Without an enabled search provider the server returns specific queries; ChatGPT can search and return public source URLs and actual observations. Brave is optional via `VINTED_REFERENCE_SEARCH=brave` and `BRAVE_SEARCH_API_KEY`. External access restrictions are respected, and unknown views/variants remain unknown.
+
+Use `npm run verify:isolated` while this checkout's bundle is serving the active connector. It runs typecheck, build, bundle and the full default tests in a temporary copy and verifies that the active bundle, launcher and local MCP configuration stayed unchanged. Do not run ordinary bundle/clean commands over an active production bundle.
+
+See [product-reference API, evidence model and safe activation/rollback](docs/product-references.md) and [recorded fixture/live results and remaining acceptance](docs/reference-verification-results.md). The 2026-11-09 verification report is historical; the existing connector's listing-image path is now live-confirmed, while the **new reference tool still needs a connector switch, tool refresh and actual ChatGPT acceptance**.

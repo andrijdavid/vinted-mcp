@@ -43,3 +43,12 @@ pnpm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Session and visual review artifacts
+.vinted-mcp/
+profile-*/
+*storage-state*.json
+*cookies*.json
+exports/
+artifacts/
+start-stdio.sh

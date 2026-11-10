@@ -1,10 +1,13 @@
+import { parseItemPage } from "../../visual/item-page";
+import { TTLCache } from "../../visual/common";
+import { readBounded, decodeText, fetchSameOrigin } from "../../visual/network";
 import { CookieFactory } from "../auth/cookie-factory";
 import { EnvAuth } from "../auth/env-auth";
 import { HttpAuth } from "../auth/http-auth";
 import { PlaywrightAuth } from "../auth/playwright-auth";
 import { ProfileAuth, hasProfile, loginHint } from "../auth/profile-auth";
 import { TokenCache } from "../auth/token-cache";
-import { getBaseUrl } from "../models/country";
+import { getBaseUrl, getCountry } from "../models/country";
 import {
   buildFavouriteToggleUrl,
   buildItemPageUrl,
@@ -24,6 +27,9 @@ interface RequestOptions {
 }
 
 export class VintedAPIClient {
+  private readonly itemUrls = new TTLCache<string>(300_000, 512);
+  private readonly accessCooldowns = new Map<string, number>();
+  private readonly readCache = new TTLCache<any>(90_000, 128);
   private readonly tokenCache = new TokenCache();
   private readonly httpAuth: HttpAuth;
   private readonly envAuth: EnvAuth;
@@ -37,10 +43,8 @@ export class VintedAPIClient {
   private consecutiveFailures = 0;
   private readonly sessionRequestCount = new Map<string, number>();
   private readonly sessionLocks = new Map<string, Promise<AuthSession>>();
-  private cooldownUntil = 0;
 
   private static readonly MAX_CONSECUTIVE_FAILURES = 10;
-  private static readonly BACKOFF_MS = 30000;
   private static readonly MAX_BACKOFF_MS = 60000;
   private static readonly LONG_COOLDOWN_MS = 5 * 60 * 1000;
   private static readonly MAX_REQUESTS_PER_SESSION = 40;
@@ -50,8 +54,8 @@ export class VintedAPIClient {
     this.proxies = options.proxies || (options.proxyUrl ? [options.proxyUrl] : []);
     this.httpAuth = new HttpAuth(this.tokenCache, this.proxies.length > 0 ? this.proxies[0] : undefined);
     this.envAuth = new EnvAuth(new TokenCache());
-    this.rateLimiter = new RateLimiter(options.maxConcurrency || 5, options.requestDelayMs || 500, options.jitterMs || 300);
-    this.maxRetries = options.maxRetries || 3;
+    this.rateLimiter = new RateLimiter(options.maxConcurrency ?? 3, options.requestDelayMs ?? 500, options.jitterMs ?? 300);
+    this.maxRetries = options.maxRetries ?? 2;
 
     if (this.authMode === "playwright") {
       this.cookieFactory = new CookieFactory(this.tokenCache);
@@ -62,8 +66,14 @@ export class VintedAPIClient {
 
   async searchItems(params: SearchParams) {
     const url = buildSearchUrl(params);
+    const cacheKey = `search:${url}`;
+    const cached = this.readCache.get(cacheKey);
+    if (cached) return structuredClone(cached);
     const data = await this.makeRequest(url, params.country);
-    return parseSearchResponse(data, params.country, params.page || 1, params.perPage || 24);
+    const parsed = parseSearchResponse(data, params.country, params.page || 1, params.perPage || 24);
+    for (const item of parsed.items) this.itemUrls.set(`${params.country}:${item.id}`, item.url);
+    this.readCache.set(cacheKey, structuredClone(parsed));
+    return parsed;
   }
 
   /**
@@ -71,63 +81,34 @@ export class VintedAPIClient {
    * of detail left, so scrape it and fill the seller block from the user API,
    * which is still alive.
    */
-  async getItem(id: number, country: string) {
-    try {
-      const item = await this.scrapeItemPage(id, country);
-
-      if (item.seller.id) {
-        try {
-          const userData = await this.makeRequest(buildUserUrl(item.seller.id, country), country);
-          item.seller = parseSeller(userData.user || userData, country);
-        } catch (error: any) {
-          console.warn(`[vinted-core] Seller lookup failed for item ${id}: ${error?.message || error}`);
-        }
-      }
-
-      return item;
-    } catch (error: any) {
-      console.warn(`[vinted-core] Item page scrape failed for ${id}: ${error?.message || error}`);
+  async getItem(id: number, country: string, sourceUrl?: string) {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Invalid item ID");
+    country = getCountry(country).code;
+    if (sourceUrl) {
+      const parsed = new URL(sourceUrl);
+      if (parsed.origin !== getBaseUrl(country) || parsed.username || parsed.password || !new RegExp(`^/items/${id}(?:-|$)`).test(parsed.pathname)) throw new Error("Invalid listing source URL");
+      this.itemUrls.set(`${country}:${id}`, parsed.href);
     }
-
-    return {
-      id,
-      url: buildItemPageUrl(id, country),
-      title: "",
-      description: "(All fetch methods failed)",
-      price: 0,
-      currency: "EUR",
-      originalPrice: null,
-      country,
-      brand: null,
-      brandId: null,
-      category: null,
-      categoryId: null,
-      size: null,
-      condition: null,
-      color: null,
-      photos: [],
-      favouriteCount: 0,
-      viewCount: 0,
-      isSold: false,
-      soldAt: null,
-      createdAt: "",
-      updatedAt: "",
-      seller: {
-        id: 0,
-        username: "",
-        rating: null,
-        ratingCount: 0,
-        itemCount: 0,
-        followerCount: 0,
-        lastSeenAt: null,
-        country,
-        profileUrl: ""
-      },
-      scrapedAt: new Date().toISOString()
-    };
+    const key = `item:${country}:${id}`;
+    const cached = this.readCache.get(key);
+    if (cached) return structuredClone(cached);
+    const item = await this.scrapeItemPage(id, country);
+    if (item.seller.id) {
+      try {
+        const userData = await this.makeRequest(buildUserUrl(item.seller.id, country), country);
+        item.seller = parseSeller(userData.user || userData, country);
+      } catch {
+        item.sellerLookupStatus = "unavailable";
+        console.warn("[vinted-core] Seller lookup unavailable; returning partial item data");
+      }
+    }
+    this.readCache.set(key, structuredClone(item));
+    return item;
   }
 
   async getSeller(id: number, country: string) {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Invalid seller ID");
+    country = getCountry(country).code;
     const userUrl = buildUserUrl(id, country);
     const feedbacksUrl = buildUserFeedbacksUrl(id, country);
     const wardrobeUrl = buildWardrobeUrl(id, country);
@@ -152,7 +133,7 @@ export class VintedAPIClient {
       return { ...profile, reviews, items, scrapedAt: new Date().toISOString() };
     };
 
-    if (this.playwrightAuth) {
+    if (this.authMode === "playwright" && this.playwrightAuth) {
       try {
         return await fetchSellerData((url, c) => this.makePlaywrightRequest(url, c));
       } catch (error: any) {
@@ -235,7 +216,8 @@ export class VintedAPIClient {
         continue;
       }
 
-      const prices = items.map((item: any) => item.price).sort((a: number, b: number) => a - b);
+      const prices = items.map((item: any) => item.price).filter((p: any) => typeof p === "number" && p > 0).sort((a: number, b: number) => a - b);
+      if (!prices.length) continue;
       const sum = prices.reduce((a: number, b: number) => a + b, 0);
       const avg = sum / prices.length;
       const median =
@@ -382,20 +364,12 @@ export class VintedAPIClient {
   private async makeRequest(url: string, country: string, options: RequestOptions = {}, retryCount = 0): Promise<any> {
     const key = country.toLowerCase();
 
+    const origin = new URL(url).origin;
+    if (Date.now() < (this.accessCooldowns.get(origin) || 0)) throw new Error("Vinted rate limited or access restricted; cooldown active, retry later");
     if (this.consecutiveFailures >= VintedAPIClient.MAX_CONSECUTIVE_FAILURES) {
-      if (Date.now() < this.cooldownUntil) {
-        await sleep(this.cooldownUntil - Date.now());
-      } else {
-        this.cooldownUntil = Date.now() + VintedAPIClient.LONG_COOLDOWN_MS;
-        this.rateLimiter.pause(VintedAPIClient.LONG_COOLDOWN_MS);
-        console.warn(
-          `[vinted-core] ${VintedAPIClient.MAX_CONSECUTIVE_FAILURES} consecutive failures, cooling down ${VintedAPIClient.LONG_COOLDOWN_MS}ms before retrying`
-        );
-        await sleep(VintedAPIClient.LONG_COOLDOWN_MS);
-      }
+      this.accessCooldowns.set(origin, Date.now() + VintedAPIClient.LONG_COOLDOWN_MS);
       this.consecutiveFailures = 0;
-      this.tokenCache.invalidate(key);
-      this.sessionRequestCount.set(key, 0);
+      throw new Error("Vinted requests temporarily stopped after repeated failures; retry later");
     }
 
     const currentCount = this.sessionRequestCount.get(key) || 0;
@@ -428,7 +402,8 @@ export class VintedAPIClient {
     try {
       const fetchOptions: Record<string, unknown> = {
         headers,
-        redirect: "follow",
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
         method: options.method || "GET"
       };
 
@@ -442,15 +417,24 @@ export class VintedAPIClient {
         fetchOptions.dispatcher = dispatcher;
       }
 
-      const response = await this.rateLimiter.execute(() => fetch(url, fetchOptions as RequestInit));
+      const { response, responseText } = await this.rateLimiter.execute(async () => {
+        const response = await fetch(url, fetchOptions as RequestInit);
+        const responseText = decodeText(await readBounded(response, 5_000_000));
+        return { response, responseText };
+      });
 
       if (response.ok) {
         this.consecutiveFailures = 0;
-        return parseJsonBody(await response.text());
+        return parseJsonBody(responseText);
       }
 
       const status = response.status;
-      const retriable = status === 401 || status === 403 || status === 429 || status === 503;
+      const retriable = status === 401 || status === 429 || status === 502 || status === 503 || status === 504;
+      if (status === 403 || status === 429) {
+        const delay = status === 429 ? parseRetryAfter(response.headers.get("retry-after")) ?? 60_000 : 300_000;
+        this.accessCooldowns.set(origin, Date.now() + delay);
+        throw new Error(`Vinted access restricted or rate limited (${status}); retry later, no bypass attempted`);
+      }
 
       if (retriable && retryCount < this.maxRetries) {
         this.tokenCache.invalidate(key);
@@ -460,7 +444,7 @@ export class VintedAPIClient {
           this.envAuth.invalidate(key);
         }
 
-        if (status === 401 || status === 403) {
+        if (status === 401) {
           this.profileAuth.invalidate(key);
         }
 
@@ -475,11 +459,6 @@ export class VintedAPIClient {
           this.consecutiveFailures += 1;
           const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
           pauseMs = retryAfter ?? this.computeBackoff(this.consecutiveFailures);
-        }
-
-        const body = await response.text().catch(() => "");
-        if (this.looksLikeCloudflare(response, body) && this.cookieFactory) {
-          await this.cookieFactory.createSession(key).catch(() => undefined);
         }
 
         if (pauseMs > 0) {
@@ -510,17 +489,6 @@ export class VintedAPIClient {
     return exp + jitter;
   }
 
-  private looksLikeCloudflare(response: Response, body: string): boolean {
-    const server = response.headers.get("server")?.toLowerCase() || "";
-    if (server.includes("cloudflare")) {
-      return true;
-    }
-    if (response.headers.get("cf-mitigated") || response.headers.get("cf-ray")) {
-      return true;
-    }
-    return body.includes("cf-challenge") || body.includes("Just a moment") || body.includes("Attention Required");
-  }
-
   private async makePlaywrightRequest(url: string, country: string, retryCount = 0): Promise<any> {
     if (!this.playwrightAuth) {
       throw new Error("PlaywrightAuth not available");
@@ -549,7 +517,8 @@ export class VintedAPIClient {
     const response = await this.rateLimiter.execute(() =>
       fetch(url, {
         headers,
-        redirect: "follow"
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000)
       })
     );
 
@@ -559,10 +528,6 @@ export class VintedAPIClient {
       return response.json();
     }
 
-    if ((response.status === 403 || response.status === 429) && retryCount < 1) {
-      this.playwrightAuth = new PlaywrightAuth(new TokenCache(15 * 60 * 1000));
-      return this.makePlaywrightRequest(url, country, retryCount + 1);
-    }
 
     throw new Error(`Vinted API error (playwright): ${response.status} ${response.statusText}`);
   }
@@ -580,91 +545,26 @@ export class VintedAPIClient {
       // Item pages load anonymously; a session is a nice-to-have, not required.
     }
 
-    const response = await this.rateLimiter.execute(() =>
-      fetch(buildItemPageUrl(id, country), {
-        headers: {
-          "User-Agent": getRandomUserAgent(),
-          Accept: "text/html,application/xhtml+xml",
-          ...(cookieHeader ? { Cookie: cookieHeader } : {})
-        },
-        redirect: "follow",
-        ...(dispatcher ? { dispatcher } : {})
-      } as RequestInit)
-    );
-
-    if (!response.ok) {
-      throw new Error(`Item page fetch failed: ${response.status} ${response.statusText}`);
-    }
-
-    return response.text();
+    const url = this.itemUrls.get(`${country}:${id}`) || buildItemPageUrl(id, country);
+    const origin = new URL(url).origin;
+    if (Date.now() < (this.accessCooldowns.get(origin) || 0)) throw new Error("Vinted access restricted or rate limited; retry later");
+    return this.rateLimiter.execute(async () => {
+      const response = await fetchSameOrigin(url, {
+        headers: { "User-Agent": getRandomUserAgent(), Accept: "text/html,application/xhtml+xml", ...(cookieHeader ? { Cookie: cookieHeader } : {}) },
+        signal: AbortSignal.timeout(15_000), ...(dispatcher ? { dispatcher } : {})
+      } as RequestInit);
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 403 || response.status === 429) this.accessCooldowns.set(origin, Date.now() + (response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) ?? 60_000 : 300_000));
+        throw new Error(`Item page fetch failed: ${response.status}; stopped without bypass attempts`);
+      }
+      return decodeText(await readBounded(response, 8_000_000));
+    });
   }
 
-  /**
-   * Structured fields come from the page's <script type="application/ld+json">
-   * block. The rest (seller id, favourite count, catalog id, brand id, size)
-   * only exist inside the React Server Component payload, which is JSON
-   * embedded as an escaped JS string literal, so its quotes appear in the raw
-   * HTML as \" - hence the backslash-escaped patterns below.
-   */
+  /** Read JSON-LD and item-scoped React payload records; never borrow recommendation data. */
   private async scrapeItemPage(id: number, country: string): Promise<any> {
-    const baseUrl = getBaseUrl(country);
-    const html = await this.fetchItemPage(id, country);
-
-    const ldJsonMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
-    const ldJson = ldJsonMatch ? safeJsonParse(ldJsonMatch[1]) : null;
-
-    const sellerIdMatch = html.match(/\\"seller_id\\":\\"?(\d+)\\"?/);
-    const favouriteMatch = html.match(/\\"favourite_count\\":(\d+)/);
-    const categoryIdMatch = html.match(/\\"catalog_id\\":\\?"?(\d+)\\?"?/);
-    const brandIdMatch = html.match(/\\"code\\":\\"summary_brand\\",\\"id\\":\\"(\d+)\\"/);
-    const sizeMatch = html.match(/\\"code\\":\\"size\\",\\"data\\":\{\\"id\\":\d+,\\"title\\":\\"[^"]*?\\",\\"value\\":\\"([^"]+?)\\"/);
-
-    const photos: string[] = [];
-    for (const match of html.matchAll(/\\"url\\":\\"(https:\/\/images1\.vinted\.net\/[^"\\]*\/f800\/[^"\\]+)\\"/g)) {
-      if (!photos.includes(match[1])) {
-        photos.push(match[1]);
-      }
-    }
-
-    const sellerId = sellerIdMatch ? parseInt(sellerIdMatch[1], 10) : 0;
-
-    return {
-      id,
-      url: ldJson?.offers?.url || buildItemPageUrl(id, country),
-      title: ldJson?.name || "",
-      description: ldJson?.description || "",
-      price: Number(ldJson?.offers?.price || 0),
-      currency: ldJson?.offers?.priceCurrency || "EUR",
-      originalPrice: null,
-      country,
-      brand: ldJson?.brand?.name || null,
-      brandId: brandIdMatch ? parseInt(brandIdMatch[1], 10) : null,
-      category: ldJson?.category || null,
-      categoryId: categoryIdMatch ? parseInt(categoryIdMatch[1], 10) : null,
-      size: sizeMatch?.[1] || null,
-      condition: ldJson?.offers?.itemCondition?.replace("Condition", "") || null,
-      color: ldJson?.color || null,
-      photos: photos.length > 0 ? photos : ldJson?.image ? [ldJson.image] : [],
-      favouriteCount: favouriteMatch ? parseInt(favouriteMatch[1], 10) : 0,
-      // ponytail: the item page no longer carries view count or timestamps.
-      viewCount: 0,
-      isSold: ldJson?.offers?.availability === "OutOfStock",
-      soldAt: null,
-      createdAt: "",
-      updatedAt: "",
-      seller: {
-        id: sellerId,
-        username: "",
-        rating: null,
-        ratingCount: 0,
-        itemCount: 0,
-        followerCount: 0,
-        lastSeenAt: null,
-        country,
-        profileUrl: sellerId ? `${baseUrl}/member/${sellerId}` : ""
-      },
-      scrapedAt: new Date().toISOString()
-    };
+    return parseItemPage(await this.fetchItemPage(id, country), id, country);
   }
 
   private getProxyDispatcher(): unknown {
@@ -672,7 +572,7 @@ export class VintedAPIClient {
       return undefined;
     }
 
-    const proxy = this.proxies[Math.floor(Math.random() * this.proxies.length)];
+    const proxy = this.proxies[0]; // Never rotate proxies in response to access restrictions.
 
     try {
       const undici = runtimeRequire("undici") as { ProxyAgent?: new (url: string) => unknown };
@@ -703,7 +603,7 @@ function parseJsonBody(text: string): any {
   try {
     return JSON.parse(text);
   } catch {
-    return {};
+    throw new Error("Invalid JSON response from Vinted (possibly access restricted)");
   }
 }
 
